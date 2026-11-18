@@ -11,7 +11,7 @@ import { PasswordlessLogin } from './methods/PasswordlessLogin'
 import { TotpLogin } from './methods/Totp2FALogin'
 import { CodeLogin } from './methods/GetACodeLogin'
 import { RecoveryLogin } from './methods/RecoveryEmailLogin'
-import { canPromptForInput } from './methods/LoginUtils'
+import { canPromptForInput, getErrorMessage } from './methods/LoginUtils'
 
 import type { Account } from '../../interface/Account'
 
@@ -653,6 +653,36 @@ export class Login {
 
             // Verify your email - identical footer actions are validated by their resulting state, not position
             case 'EMAIL_VERIFICATION_INPUT': {
+                // 新增：优先直接填写验证输入框（依次尝试账号邮箱、恢复邮箱）
+                const verificationInputReady = await this.checkSelector(page, this.selectors.emailVerificationInput)
+                if (verificationInputReady) {
+                    const verificationCandidates = [account.email, account.recoveryEmail].filter(Boolean)
+                    for (const candidate of verificationCandidates) {
+                        const filled = await page
+                            .fill(this.selectors.emailVerificationInput, candidate)
+                            .catch(() => false)
+                        if (!filled) break
+                        await page.keyboard.press('Enter')
+                        await this.waitForIdle(page, 'after email verification submit')
+                        await this.bot.utils.wait(2000)
+                        const verificationError = await getErrorMessage(page)
+                        if (!verificationError) {
+                            this.bot.logger.info(
+                                this.bot.isMobile,
+                                'LOGIN',
+                                `邮箱验证输入已提交: ${candidate}`
+                            )
+                            return true
+                        }
+                        this.bot.logger.warn(
+                            this.bot.isMobile,
+                            'LOGIN',
+                            `邮箱验证被拒(${candidate}): ${verificationError}`
+                        )
+                    }
+                    // 两个候选都被拒则继续走下方 footer 备选逻辑
+                }
+
                 if (!account.password) {
                     if (!canPromptForInput()) {
                         this.bot.logger.error(this.bot.isMobile, 'LOGIN', '邮箱验证需要已配置的密码或交互式终端输入')
