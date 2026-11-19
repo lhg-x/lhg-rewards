@@ -111,6 +111,96 @@ export class Login {
         this.recoveryLogin = new RecoveryLogin(this.bot)
     }
 
+    async authenticateToHost(
+        page: Page,
+        account: Account,
+        targetHostname: string,
+        maxIterations = 25
+    ): Promise<void> {
+        const normalizedTarget = targetHostname.toLowerCase()
+        const isOnTargetHost = (rawUrl: string): boolean => {
+            try {
+                const host = new URL(rawUrl).hostname.toLowerCase()
+                return host === normalizedTarget || host.endsWith(`.${normalizedTarget}`)
+            } catch {
+                return false
+            }
+        }
+
+        suspendMediaBlocking(this.bot, page.context())
+        this.capturedUnknownUrls.clear()
+        this.usedRecoveryCodes.clear()
+        this.signInMethodsLogged = false
+        this.passwordlessMethodSelected = false
+
+        await this.bot.browser.utils.reloadBadPage(page)
+        await this.bot.browser.utils.disableFido(page)
+
+        let iteration = 0
+        let previousState: LoginState = 'UNKNOWN'
+        let sameStateCount = 0
+
+        while (iteration < maxIterations) {
+            if (page.isClosed()) throw new Error('Page closed unexpectedly')
+
+            if (isOnTargetHost(page.url())) {
+                const storageState = await page.context().storageState()
+                saveStorageState(this.bot.config.sessionPath, account.email, this.bot.isMobile, storageState)
+                this.bot.logger.info(this.bot.isMobile, 'LOGIN', `已认证并到达目标主机 ${normalizedTarget}`)
+                return
+            }
+
+            iteration++
+            this.bot.logger.debug(
+                this.bot.isMobile,
+                'LOGIN',
+                `目标主机认证状态检查 ${iteration}/${maxIterations} (${normalizedTarget})`
+            )
+
+            const state = await this.detectCurrentState(page)
+            if (state !== previousState && previousState !== 'UNKNOWN') {
+                this.bot.logger.info(this.bot.isMobile, 'LOGIN', `状态转换: ${previousState} → ${state}`)
+            }
+
+            if (state === previousState && state !== 'LOGGED_IN' && state !== 'UNKNOWN') {
+                sameStateCount++
+                if (sameStateCount >= 4) {
+                    this.bot.logger.warn(this.bot.isMobile, 'LOGIN', `在状态 "${state}" 停滞4次循环，刷新页面`)
+                    await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {})
+                    await this.bot.utils.wait(3000)
+                    sameStateCount = 0
+                    previousState = 'UNKNOWN'
+                    continue
+                }
+            } else {
+                sameStateCount = 0
+            }
+            previousState = state
+
+            if (state === 'LOGGED_IN') {
+                if (isOnTargetHost(page.url())) {
+                    const storageState = await page.context().storageState()
+                    saveStorageState(this.bot.config.sessionPath, account.email, this.bot.isMobile, storageState)
+                    return
+                }
+                await page
+                    .goto(`https://${normalizedTarget}/profile?lang=en-US`, { waitUntil: 'domcontentloaded' })
+                    .catch(() => {})
+                await this.bot.utils.wait(1500)
+                continue
+            }
+
+            const shouldContinue = await this.handleState(state, page, account)
+            if (!shouldContinue) {
+                throw new Error(`Login failed or aborted at state: ${state}`)
+            }
+
+            await this.bot.utils.wait(1000)
+        }
+
+        throw new Error(`Authentication timeout waiting for host: ${normalizedTarget}`)
+    }
+
     async login(page: Page, account: Account) {
         try {
             suspendMediaBlocking(this.bot, page.context())

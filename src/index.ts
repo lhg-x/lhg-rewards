@@ -73,6 +73,10 @@ export function getCurrentContext(): ExecutionContext {
     return context
 }
 
+export function runInExecutionContext<T>(ctx: ExecutionContext, fn: () => Promise<T>): Promise<T> {
+    return executionContext.run(ctx, fn)
+}
+
 async function flushAllWebhooks(timeoutMs = 5000): Promise<void> {
     await Promise.allSettled([
         flushDiscordQueue(timeoutMs),

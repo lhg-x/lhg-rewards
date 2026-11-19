@@ -32,9 +32,9 @@ ACCOUNT_1_PASSWORD=主密码
 ACCOUNT_1_RECOVERY_EMAIL=辅助邮箱@pyyemail.cc
 ACCOUNT_1_RECOVERY_PASSWORD=辅助邮箱密码
 ACCOUNT_1_RECOVERY_URL=https://pyyemail.cc
-# 海外号填 auto / en；国区号填 CN / zh-CN
-ACCOUNT_1_GEO_LOCALE=auto
-ACCOUNT_1_LANG_CODE=en
+# 海外号填 auto / en；若统一在国内兑换（国区模式），必须填 CN / zh-CN 并留空所有代理
+ACCOUNT_1_GEO_LOCALE=CN
+ACCOUNT_1_LANG_CODE=zh-CN
 ACCOUNT_1_SAVE_FINGERPRINT_MOBILE=true
 ACCOUNT_1_SAVE_FINGERPRINT_DESKTOP=true
 ```
@@ -52,6 +52,31 @@ cp config.agent.json config.json
 - `humanize.skipWhenCompletedToday: true`（当天已完成后自动跳过，支持安全重试）
 
 > 若账号为海外区，可把 `config.json` 中 `searchSettings.queryEngines` 改为 `["google", "wikipedia", "local"]` 或保留 `["china", "local"]`。
+
+---
+
+## 二点五、国区统一模式：把所有账号地区设为中国
+
+Microsoft Rewards 严格执行**“在哪国赚、在哪国兑”**规则（不支持美区/日区直接用国内 `+86` 手机号兑换）。如果需要在**中国大陆直连网络下赚取并兑换**（京东 E 卡 / 盒马 / 天猫超市等），请按以下规则执行：
+
+1. **三层必须同时对齐中国大陆（CN）**：
+   - **微软账号资料地区**：`account.microsoft.com/profile` 中的国家/地区设为 `China` / `中国大陆`。
+   - **本地配置与会话**：`.env` 设置 `ACCOUNT_N_GEO_LOCALE=CN`、`ACCOUNT_N_LANG_CODE=zh-CN`，且清除所有海外代理（`ACCOUNT_N_PROXY_*` 留空）。
+   - **运行网络环境**：全程使用**中国大陆直连 IP**（不要挂境外 VPN/代理运行）。
+2. **执行一键迁移命令（首次配置或从美/日区转回国区时跑一次）**：
+   ```bash
+   npm run set-region -- --country CN --update-env --clear-proxy --json
+   ```
+   - 该命令会自动登录 `account.microsoft.com/profile`（含 `pyyemail.cc` 自动 2FA 接码），将资料地区改为中国大陆，清掉 `sessions.db` 中旧美/日区指纹，并同步更新 `.env`。
+   - 如果已在网页手动改过资料地区，只需同步本地配置和指纹缓存，可加 `--local-only`：
+     ```bash
+     npm run set-region -- --country CN --local-only --update-env --clear-proxy --json
+     ```
+3. **迁移冷却期（`On the go`）处理原则（重要）**：
+   - 原本在美区/日区活跃的号刚切回中国大陆直连 IP 时，Rewards 页面前 1–7 天可能出现 *"Oops, looks like you're on the go"*（"哎呀，看起来你在外出"）提示，属于微软地区迁移冷却期。
+   - **遇到该提示时严禁切回海外代理或反复切换地区**！请保持中国直连 IP、`CN / zh-CN` 配置每天运行一次 `npm start`，等待微软后台自动把该账号的 Rewards 市场迁入 CN。
+4. **国区兑换提醒**：
+   - 国区兑换礼品卡需绑定中国大陆 `+86` 实体手机号收短信验证码（VoIP 虚拟号不可用），且微软通常限制**单个手机号最多绑定约 6 个 Rewards 账号**。
 
 ---
 

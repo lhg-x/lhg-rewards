@@ -172,6 +172,12 @@ export function saveResolvedRegion(sessionPath: string, email: string, region: s
         .run(email, region, Date.now())
 }
 
+export function clearAccountFingerprints(sessionPath: string, email: string): void {
+    getDb(sessionPath)
+        .prepare('UPDATE sessions SET fingerprint = NULL WHERE LOWER(email) = LOWER(?)')
+        .run(email)
+}
+
 export function closeSessionStore(): void {
     if (!db) return
     try {
