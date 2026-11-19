@@ -52,8 +52,29 @@ export class Login {
     recoveryLogin: RecoveryLogin
 
     private readonly capturedUnknownUrls = new Set<string>()
+    private readonly usedRecoveryCodes = new Set<string>()
     private signInMethodsLogged = false
     private passwordlessMethodSelected = false
+
+    private async snapshotRecoveryCodes(account: Account): Promise<void> {
+        const client = this.codeLogin.createMailboxClient(account)
+        if (!client) return
+        try {
+            const existing = await client.snapshotCodes()
+            existing.forEach(c => this.usedRecoveryCodes.add(c))
+            this.bot.logger.debug(
+                this.bot.isMobile,
+                'LOGIN',
+                `已预快照辅助邮箱历史验证码数量: ${this.usedRecoveryCodes.size}`
+            )
+        } catch (error) {
+            this.bot.logger.warn(
+                this.bot.isMobile,
+                'LOGIN',
+                `预快照辅助邮箱历史验证码失败，将继续流程: ${error instanceof Error ? error.message : String(error)}`
+            )
+        }
+    }
 
     private readonly selectors = {
         primaryButton: 'button[data-testid="primaryButton"]',
@@ -94,6 +115,7 @@ export class Login {
         try {
             suspendMediaBlocking(this.bot, page.context())
             this.capturedUnknownUrls.clear()
+            this.usedRecoveryCodes.clear()
             this.signInMethodsLogged = false
             this.passwordlessMethodSelected = false
             this.bot.logger.info(this.bot.isMobile, 'LOGIN', '开始登录流程')
@@ -603,17 +625,19 @@ export class Login {
 
                 const emailIconOldFound = await this.checkSelector(page, this.selectors.emailIconOld)
                 if (emailOption || emailIconOldFound) {
-                    if (!canPromptForInput()) {
+                    const autoFetchReady = this.codeLogin.canAutoFetchCode(account)
+                    if (!autoFetchReady && !canPromptForInput()) {
                         this.bot.logger.error(
                             this.bot.isMobile,
                             'LOGIN',
-                            '没有可用的非交互登录方式；邮箱验证码回退需要交互式终端输入'
+                            '没有可用的非交互登录方式；请配置 ACCOUNT_N_RECOVERY_EMAIL + ACCOUNT_N_RECOVERY_PASSWORD 或在交互终端运行'
                         )
                         return false
                     }
 
                     this.bot.logger.info(this.bot.isMobile, 'LOGIN', '选择邮箱验证码登录')
                     this.passwordlessMethodSelected = false
+                    await this.snapshotRecoveryCodes(account)
 
                     const clicked = emailOption
                         ? await this.clickSignInMethodOption(page, emailOption)
@@ -625,7 +649,7 @@ export class Login {
                     }
 
                     await this.waitForIdle(page, 'after email method selection')
-                    await this.codeLogin.handle(page)
+                    await this.codeLogin.handle(page, account, this.usedRecoveryCodes)
                     return true
                 }
 
@@ -645,6 +669,7 @@ export class Login {
             case 'RECOVERY_EMAIL_INPUT': {
                 this.bot.logger.info(this.bot.isMobile, 'LOGIN', '检测到恢复邮箱输入')
                 await this.waitForIdle(page, 'on recovery page')
+                await this.snapshotRecoveryCodes(account)
                 this.bot.logger.info(this.bot.isMobile, 'LOGIN', '启动恢复邮箱处理器')
                 await this.recoveryLogin.handle(page, account?.recoveryEmail)
                 this.bot.logger.info(this.bot.isMobile, 'LOGIN', '恢复邮箱处理器完成')
@@ -653,13 +678,15 @@ export class Login {
 
             // Verify your email - identical footer actions are validated by their resulting state, not position
             case 'EMAIL_VERIFICATION_INPUT': {
-                // 新增：优先直接填写验证输入框（依次尝试账号邮箱、恢复邮箱）
+                // 优先直接填写验证输入框（微软此页通常要求完整恢复邮箱，其次主邮箱）
                 const verificationInputReady = await this.checkSelector(page, this.selectors.emailVerificationInput)
                 if (verificationInputReady) {
-                    const verificationCandidates = [account.email, account.recoveryEmail].filter(Boolean)
+                    await this.snapshotRecoveryCodes(account)
+                    const verificationCandidates = [account.recoveryEmail, account.email].filter(Boolean)
                     for (const candidate of verificationCandidates) {
                         const filled = await page
                             .fill(this.selectors.emailVerificationInput, candidate)
+                            .then(() => true)
                             .catch(() => false)
                         if (!filled) break
                         await page.keyboard.press('Enter')
@@ -684,13 +711,17 @@ export class Login {
                 }
 
                 if (!account.password) {
-                    if (!canPromptForInput()) {
-                        this.bot.logger.error(this.bot.isMobile, 'LOGIN', '邮箱验证需要已配置的密码或交互式终端输入')
+                    if (!this.codeLogin.canAutoFetchCode(account) && !canPromptForInput()) {
+                        this.bot.logger.error(
+                            this.bot.isMobile,
+                            'LOGIN',
+                            '邮箱验证需要已配置的密码、恢复邮箱凭据或交互式终端输入'
+                        )
                         return false
                     }
 
                     this.bot.logger.info(this.bot.isMobile, 'LOGIN', '检测到邮箱验证输入')
-                    await this.codeLogin.handle(page)
+                    await this.codeLogin.handle(page, account, this.usedRecoveryCodes)
                     return true
                 }
 
@@ -727,9 +758,9 @@ export class Login {
                     if (!(await this.checkSelector(page, this.selectors.emailVerificationInput))) break
                 }
 
-                if (canPromptForInput()) {
-                    this.bot.logger.info(this.bot.isMobile, 'LOGIN', '回退到交互式邮箱验证')
-                    await this.codeLogin.handle(page)
+                if (this.codeLogin.canAutoFetchCode(account) || canPromptForInput()) {
+                    this.bot.logger.info(this.bot.isMobile, 'LOGIN', '回退到邮箱验证码登录')
+                    await this.codeLogin.handle(page, account, this.usedRecoveryCodes)
                     return true
                 }
 
@@ -808,8 +839,15 @@ export class Login {
                 return true
             }
 
-            // Enter your code - prefer its alternate-method footer before Back to avoid an email-code loop
+            // Enter your code - auto-fetch from recovery mailbox when configured, otherwise escape to alternate method
             case 'OTP_CODE_ENTRY': {
+                if (this.codeLogin.canAutoFetchCode(account)) {
+                    this.bot.logger.info(this.bot.isMobile, 'LOGIN', '检测到OTP代码输入页面；使用辅助邮箱自动取码回填')
+                    await this.codeLogin.handle(page, account, this.usedRecoveryCodes)
+                    await this.waitForIdle(page, 'after auto OTP code entry')
+                    return true
+                }
+
                 this.bot.logger.info(this.bot.isMobile, 'LOGIN', '检测到OTP代码输入页面；尝试可用的备选登录方式')
 
                 if (await this.checkSelector(page, this.selectors.footerAction)) {

@@ -136,6 +136,8 @@ export function loadAccounts(): Account[] {
                 password,
                 totpSecret: envStr(`ACCOUNT_${index}_TOTP_SECRET`),
                 recoveryEmail: envStr(`ACCOUNT_${index}_RECOVERY_EMAIL`) ?? '',
+                recoveryPassword: envStr(`ACCOUNT_${index}_RECOVERY_PASSWORD`),
+                recoveryUrl: envStr(`ACCOUNT_${index}_RECOVERY_URL`),
                 geoLocale: envStr(`ACCOUNT_${index}_GEO_LOCALE`) ?? 'auto',
                 langCode: envStr(`ACCOUNT_${index}_LANG_CODE`) ?? 'en',
                 proxy: buildProxy(index),

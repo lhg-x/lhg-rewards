@@ -215,6 +215,8 @@ export function loadAccountsFromEnv(projectRoot) {
             password: envStr(`ACCOUNT_${idx}_PASSWORD`) ?? '',
             totpSecret: envStr(`ACCOUNT_${idx}_TOTP_SECRET`),
             recoveryEmail: envStr(`ACCOUNT_${idx}_RECOVERY_EMAIL`) ?? '',
+            recoveryPassword: envStr(`ACCOUNT_${idx}_RECOVERY_PASSWORD`),
+            recoveryUrl: envStr(`ACCOUNT_${idx}_RECOVERY_URL`),
             geoLocale: normalizeGeoLocale(envStr(`ACCOUNT_${idx}_GEO_LOCALE`) ?? 'auto'),
             langCode: normalizeLanguageCode(envStr(`ACCOUNT_${idx}_LANG_CODE`) ?? 'en'),
             proxy: {

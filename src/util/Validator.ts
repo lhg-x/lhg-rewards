@@ -278,6 +278,8 @@ export const AccountSchema = z.object({
     password: z.string(),
     totpSecret: z.string().optional(),
     recoveryEmail: z.string(),
+    recoveryPassword: z.string().optional(),
+    recoveryUrl: z.string().optional(),
     geoLocale: AccountCountrySchema,
     langCode: AccountLanguageSchema,
     proxy: AccountProxySchema,
